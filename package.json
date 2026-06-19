@@ -1,0 +1,14 @@
+{
+  "name": "deck-tools-service",
+  "version": "1.0.0",
+  "description": "Sidecar HTTP service: PPTX-to-images conversion, embedded-asset extraction (LibreOffice + poppler + adm-zip), and pptxgenjs deck building, called by n8n over HTTP.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "adm-zip": "0.5.17",
+    "express": "5.2.1",
+    "pptxgenjs": "4.0.1"
+  }
+}
