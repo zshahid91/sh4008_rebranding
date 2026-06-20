@@ -86,7 +86,7 @@ app.post("/pptx-to-images", express.raw({ type: "*/*", limit: "200mb" }), async 
     const pdfPath = path.join(dir, "input.pdf");
     if (!fs.existsSync(pdfPath)) throw new Error("LibreOffice did not produce a PDF");
 
-    await run("pdftoppm", ["-jpeg", "-r", "150", pdfPath, path.join(dir, "slide")]);
+    await run("pdftoppm", ["-jpeg", "-r", "100", pdfPath, path.join(dir, "slide")]);
 
     const files = fs
       .readdirSync(dir)
