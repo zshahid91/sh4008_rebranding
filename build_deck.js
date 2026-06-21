@@ -275,8 +275,27 @@ function renderTextEl(slide, el, value, font) {
 
 function renderImageEl(slide, el, value, assetsDir) {
   if (!value) return;
-  const asset = resolveAsset(assetsDir, value);
-  if (asset) slide.addImage({ ...asset, x: el.x, y: el.y, w: el.w, h: el.h });
+  const filenames = Array.isArray(value) ? value.filter(Boolean) : [value];
+  if (!filenames.length) return;
+
+  if (filenames.length === 1) {
+    const asset = resolveAsset(assetsDir, filenames[0]);
+    if (asset) slide.addImage({ ...asset, x: el.x, y: el.y, w: el.w, h: el.h });
+    return;
+  }
+
+  // Multiple pictures sharing one slot: lay them out side by side, each
+  // square-ish within the slot's height, evenly spaced across its width.
+  const gap = 0.12;
+  const cellW = (el.w - gap * (filenames.length - 1)) / filenames.length;
+  const cellH = Math.min(el.h, cellW);
+  const y = el.y + (el.h - cellH) / 2;
+  filenames.forEach((filename, i) => {
+    const asset = resolveAsset(assetsDir, filename);
+    if (!asset) return;
+    const x = el.x + i * (cellW + gap);
+    slide.addImage({ ...asset, x, y, w: cellW, h: cellH });
+  });
 }
 
 function renderTableEl(slide, el, value, colors, font) {
