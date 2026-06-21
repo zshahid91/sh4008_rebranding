@@ -19,9 +19,14 @@
  *                                node, Body Content Type "binaryData")
  *                                -> { count, images: [{ filename, base64 }] }
  *   POST /pptx-extract-assets   raw binary body = a .pptx
- *                                -> { count, assets: [{ filename, base64 }] }
+ *                                -> { count, assets: [{ filename, base64, base64Preview }], skipped: [{ filename, reason }] }
  *                                (embedded images from ppt/media/, e.g. the
- *                                logo and any pictures used by Type D/J slides)
+ *                                logo and any pictures used by Type D/J slides.
+ *                                base64 = original bytes, for reuse in /build-deck.
+ *                                base64Preview = resized JPEG (long edge <=1568px),
+ *                                for attaching to Claude vision calls. Non-raster
+ *                                formats like SVG/EMF/WMF are skipped entirely,
+ *                                since Claude's API can't decode them.)
  *   POST /build-deck            JSON { designSpec, slideContent, assets }
  *                                -> raw .pptx binary
  */
@@ -33,6 +38,7 @@ const path = require("path");
 const os = require("os");
 const crypto = require("crypto");
 const AdmZip = require("adm-zip");
+const sharp = require("sharp");
 
 const app = express();
 app.use(express.json({ limit: "200mb" }));
@@ -112,14 +118,41 @@ app.post("/pptx-to-images", express.raw({ type: "*/*", limit: "200mb" }), async 
 app.post("/pptx-extract-assets", express.raw({ type: "*/*", limit: "200mb" }), async (req, res) => {
   if (!req.body || !req.body.length) return res.status(400).json({ error: "Missing raw request body (the .pptx bytes)" });
 
+  const RASTER_EXT = new Set(["png", "jpg", "jpeg", "gif", "webp", "bmp", "tiff", "tif"]);
+
   try {
     const zip = new AdmZip(req.body);
     const entries = zip.getEntries().filter((e) => e.entryName.startsWith("ppt/media/") && !e.isDirectory);
-    const assets = entries.map((e) => ({
-      filename: path.basename(e.entryName),
-      base64: e.getData().toString("base64"),
-    }));
-    res.json({ count: assets.length, assets });
+
+    const assets = [];
+    const skipped = [];
+
+    for (const e of entries) {
+      const filename = path.basename(e.entryName);
+      const ext = (filename.split(".").pop() || "").toLowerCase();
+
+      if (!RASTER_EXT.has(ext)) {
+        skipped.push({ filename, reason: "non-raster format (" + ext + "), Claude's API can only read JPEG/PNG/GIF/WEBP" });
+        continue;
+      }
+
+      const buf = e.getData();
+      let base64Preview;
+      try {
+        const resized = await sharp(buf)
+          .resize({ width: 1568, height: 1568, fit: "inside", withoutEnlargement: true })
+          .jpeg({ quality: 85 })
+          .toBuffer();
+        base64Preview = resized.toString("base64");
+      } catch (resizeErr) {
+        skipped.push({ filename, reason: "could not decode as an image: " + String(resizeErr.message || resizeErr) });
+        continue;
+      }
+
+      assets.push({ filename, base64: buf.toString("base64"), base64Preview });
+    }
+
+    res.json({ count: assets.length, assets, skipped });
   } catch (err) {
     res.status(500).json({ error: String(err.message || err) });
   }
