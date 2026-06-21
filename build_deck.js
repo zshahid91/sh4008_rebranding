@@ -2,16 +2,32 @@
  * build_deck.js
  *
  * Generalized PptxGenJS renderer for the n8n "extract design system, then
- * restyle a target deck" automation. Takes two JSON files as input:
+ * restyle a target deck" automation.
+ *
+ * The previous version of this file hardcoded one specific reference deck's
+ * layout vocabulary (cards, headerH, moduleLabel, panel...). That only
+ * worked for decks shaped exactly like the deck it was reverse-engineered
+ * from. This version is a generic ELEMENT interpreter instead: every layout
+ * type is just a list of positioned elements with a "kind", and content
+ * maps element ids to values. Any reference deck's design spec, whatever
+ * its own layout types look like, renders through the same five kinds:
+ *
+ *   - "rect"           decorative fill (panel, header bar, divider). No content.
+ *   - "text"           a text box. Content: a string, or an array of
+ *                       strings if the element has "bullets": true.
+ *   - "image"          a picture placeholder. Content: an asset filename.
+ *   - "table"          a simple grid. Content: { headers: [...], rows: [[...]] }.
+ *   - "repeatingCards"  a variable-count card grid (numbered steps, question
+ *                       cards, etc). Content: an array of { label, text }.
+ *
+ * Takes two JSON files as input:
  *
  *   1. design_spec.json   - colours, typography, persistent elements, and
- *                           measurements for each of the 11 layout types
- *                           (Type A - Type K), as produced by the Claude
- *                           "design extraction" step.
+ *                           an elements[] array per layout type, as produced
+ *                           by the Claude "design extraction" step.
  *   2. slide_content.json - one entry per output slide: which layout type
- *                           to use and the actual text/image content for
- *                           that slide, as produced by the Claude
- *                           "content mapping" step.
+ *                           to use, and a content map of elementId -> value,
+ *                           as produced by the Claude "content mapping" step.
  *
  * Usage:
  *   node build_deck.js <design_spec.json> <slide_content.json> <output.pptx> [assetsDir]
@@ -28,11 +44,10 @@ const path = require("path");
 const pptxgen = require("pptxgenjs");
 
 // ----------------------------------------------------------------------
-// Defaults: the exact measurements reverse-engineered from the SH4008
-// reference deck. Anything missing from design_spec.json's "layouts" or
-// "persistentElements" falls back to these, so the script still produces
-// a sensible deck even from a partial extraction of a *different*
-// reference deck.
+// Defaults: only for canvas/colours/typography/persistentElements, used
+// when an extraction is partial. There is no default for "layouts" any
+// more, every layout's elements always come from the extracted spec,
+// since hardcoding one deck's layouts here would defeat the point.
 // ----------------------------------------------------------------------
 
 const DEFAULTS = {
@@ -60,95 +75,6 @@ const DEFAULTS = {
     footerBar: { x: 0, y: 7.22, w: 10, h: 0.28, color: "1F3864" },
     footerText: { x: 0.15, y: 7.22, w: 9.70, h: 0.28, size: 9, color: "FFFFFF" },
   },
-  layouts: {
-    A: {
-      cards: [
-        { x: 0.20, y: 1.35, w: 4.60, h: 1.90 },
-        { x: 5.10, y: 1.35, w: 4.70, h: 1.90 },
-      ],
-      headerH: 0.38,
-    },
-    B: {
-      moduleLabel: { x: 0.20, y: 1.00, w: 8.00, h: 0.40, size: 16 },
-      headline: { x: 0.20, y: 1.45, w: 9.00, h: 2.00, size: 56 },
-      panel: { x: 0, y: 4.75, w: 10, h: 2.47, color: "1F3864" },
-      tagline: { x: 0.5, y: 5.05, w: 9, h: 0.6, size: 20 },
-      lecturer: { x: 0.5, y: 5.85, w: 9, h: 0.5, size: 13 },
-    },
-    C: {
-      origin: { x: 0.20, y: 1.42 },
-      cardW: 4.70,
-      cardH: 1.55,
-      gapX: 0.20,
-      gapY: 0.17,
-      columns: 2,
-      numberColW: 0.55,
-    },
-    D: { image: { x: 0.20, y: 1.35, w: 9.60, h: 5.60 } },
-    E: {
-      startPoint: { x: 0.20, y: 1.35, w: 2.30, h: 0.35 },
-      context: { x: 2.65, y: 1.35, w: 7.15, h: 0.40 },
-      origin: { x: 0.20, y: 1.85 },
-      cardW: 2.30,
-      cardH: 1.20,
-      gapX: 0.12,
-      gapY: 0.12,
-      columns: 4,
-      numberColW: 0.42,
-      finalCardCentered: true,
-    },
-    F: {
-      startPoint: { x: 0.20, y: 1.35, w: 2.30, h: 0.35 },
-      context: { x: 2.65, y: 1.35, w: 7.15, h: 0.55 },
-      stagePill: { x: 0.20, y: 2.05, w: 2.30, h: 0.35 },
-      origin: { x: 0.20, y: 2.55 },
-      cardW: 4.70,
-      cardH: 1.35,
-      gapX: 0.20,
-      gapY: 0.15,
-      columns: 2,
-      headerH: 0.32,
-      annotation: { x: 0.20, y: 6.80, w: 9.60, h: 0.35, size: 11 },
-    },
-    G: {
-      x: 0.20,
-      y: 1.42,
-      w: 9.70,
-      headerH: 0.40,
-      rowH: 0.55,
-    },
-    H: {
-      columns: [
-        { x: 0.20, y: 1.35 },
-        { x: 3.47, y: 1.35 },
-        { x: 6.74, y: 1.35 },
-      ],
-      colW: 3.10,
-      headerH: 0.40,
-      subtitleH: 0.28,
-      bodyH: 4.65,
-    },
-    I: {
-      citationBar: { x: 0.20, y: 1.35, w: 9.60, h: 0.45 },
-      body: { x: 0.20, y: 1.95, w: 9.60, h: 3.45 },
-      pills: { y: 5.85, h: 0.38, w: 2.90, gapX: 0.15, x0: 0.20 },
-    },
-    J: {
-      image: { x: 0.20, y: 1.35, w: 9.60, h: 5.60 },
-      links: { x: 0.20, y: 1.42, w: 9.60, h: 5.50, size: 14 },
-    },
-    K: {
-      headline: { x: 0.20, y: 1.35, w: 9.60, h: 0.70, size: 40 },
-      infoBoxes: { y: 2.20, h: 0.70, w: 4.70, gapX: 0.20, x0: 0.20 },
-      panel: { x: 0, y: 3.30, w: 10, h: 3.92, color: "1F3864" },
-      origin: { x: 0.40, y: 3.65 },
-      cardW: 4.40,
-      cardH: 1.55,
-      gapX: 0.20,
-      gapY: 0.15,
-      columns: 2,
-    },
-  },
 };
 
 // ----------------------------------------------------------------------
@@ -172,7 +98,10 @@ function deepMerge(base, override) {
 
 function loadSpec(specPath) {
   const raw = JSON.parse(fs.readFileSync(specPath, "utf8"));
-  const merged = deepMerge(DEFAULTS, raw);
+  // Only merge the non-layout defaults; layouts always come straight from
+  // the extracted spec (see comment on DEFAULTS above).
+  const merged = deepMerge(DEFAULTS, { ...raw, layouts: undefined });
+  merged.layouts = raw.layouts || {};
   return merged;
 }
 
@@ -201,7 +130,7 @@ function grid(origin, cardW, cardH, gapX, gapY, columns, count) {
 // ----------------------------------------------------------------------
 
 function addPersistentElements(slide, spec, slideData, assetsDir) {
-  const pe = spec.persistentElements;
+  const pe = spec.persistentElements || {};
   const font = spec.typography.fontFace || "Calibri";
 
   if (pe.breadcrumb && (slideData.breadcrumb || pe.breadcrumb.text)) {
@@ -220,7 +149,7 @@ function addPersistentElements(slide, spec, slideData, assetsDir) {
     }
   }
 
-  if (slideData.sectionTitle) {
+  if (slideData.sectionTitle && pe.sectionTitle) {
     slide.addText(slideData.sectionTitle, {
       x: pe.sectionTitle.x, y: pe.sectionTitle.y, w: pe.sectionTitle.w, h: pe.sectionTitle.h,
       fontSize: pe.sectionTitle.size, bold: true, color: pe.sectionTitle.color,
@@ -228,7 +157,7 @@ function addPersistentElements(slide, spec, slideData, assetsDir) {
     });
   }
 
-  if (slideData.subtitle) {
+  if (slideData.subtitle && pe.subtitle) {
     slide.addText(slideData.subtitle, {
       x: pe.subtitle.x, y: pe.subtitle.y, w: pe.subtitle.w, h: pe.subtitle.h,
       fontSize: pe.subtitle.size, italic: true, color: pe.subtitle.color,
@@ -253,261 +182,160 @@ function addPersistentElements(slide, spec, slideData, assetsDir) {
 }
 
 // ----------------------------------------------------------------------
-// Shared card primitives
+// Generic element renderers, one per "kind"
 // ----------------------------------------------------------------------
 
-function headerCard(slide, spec, font, x, y, w, h, headerH, header, body, colors) {
-  const c = colors || spec.colors;
-  slide.addShape("rect", { x, y, w, h, fill: { color: c.paleBlue }, line: { color: c.paleBlue } });
-  slide.addShape("rect", { x, y, w, h: headerH, fill: { color: c.steelBlue }, line: { color: c.steelBlue } });
-  slide.addText(header || "", {
-    x: x + 0.10, y, w: w - 0.20, h: headerH,
-    fontSize: 12, bold: true, color: c.white, fontFace: font, valign: "middle", margin: 0,
-  });
-  slide.addText(body || "", {
-    x: x + 0.15, y: y + headerH + 0.08, w: w - 0.30, h: h - headerH - 0.16,
-    fontSize: 12, color: c.black, fontFace: font, valign: "top", margin: 0,
-  });
+function renderRect(slide, el, colors) {
+  const color = el.color || colors.steelBlue;
+  slide.addShape("rect", { x: el.x, y: el.y, w: el.w, h: el.h, fill: { color }, line: { color } });
 }
 
-function numberCard(slide, spec, font, x, y, w, h, numColW, number, body, colors) {
-  const c = colors || spec.colors;
-  slide.addShape("rect", { x, y, w, h, fill: { color: c.paleBlue }, line: { color: c.paleBlue } });
-  slide.addShape("rect", { x, y, w: numColW, h, fill: { color: c.steelBlue }, line: { color: c.steelBlue } });
-  slide.addText(String(number != null ? number : ""), {
-    x, y, w: numColW, h,
-    fontSize: 16, bold: true, color: c.white, fontFace: font, align: "center", valign: "middle", margin: 0,
-  });
-  slide.addText(body || "", {
-    x: x + numColW + 0.12, y, w: w - numColW - 0.24, h,
-    fontSize: 12, color: c.black, fontFace: font, valign: "middle", margin: 0,
-  });
-}
-
-function pill(slide, spec, font, x, y, w, h, text, color, textColor) {
-  slide.addShape("rect", { x, y, w, h, fill: { color }, line: { color } });
-  slide.addText(text || "", {
-    x, y, w, h, fontSize: 11, bold: true, color: textColor || "FFFFFF",
-    fontFace: font, align: "center", valign: "middle", margin: 0,
-  });
-}
-
-// ----------------------------------------------------------------------
-// Layout type renderers
-// ----------------------------------------------------------------------
-
-function renderA(slide, spec, font, L, content) {
-  const cards = (content.cards || []).slice(0, L.cards.length || 2);
-  cards.forEach((card, i) => {
-    const pos = L.cards[i];
-    if (!pos) return;
-    headerCard(slide, spec, font, pos.x, pos.y, pos.w, pos.h, L.headerH, card.header, card.body);
-  });
-}
-
-function renderB(slide, spec, font, L, content) {
-  const c = spec.colors;
-  if (content.moduleLabel) {
-    slide.addText(content.moduleLabel, {
-      ...L.moduleLabel, fontSize: L.moduleLabel.size, color: c.steelBlue, fontFace: font, margin: 0,
-    });
-  }
-  slide.addText(content.headline || "", {
-    ...L.headline, fontSize: L.headline.size, bold: true, color: c.black, fontFace: font, margin: 0,
-  });
-  slide.addShape("rect", { ...L.panel, fill: { color: L.panel.color }, line: { color: L.panel.color } });
-  if (content.tagline) {
-    slide.addText(content.tagline, {
-      ...L.tagline, fontSize: L.tagline.size, italic: true, color: c.steelBlue, fontFace: font, margin: 0,
-    });
-  }
-  if (content.lecturer) {
-    slide.addText(content.lecturer, {
-      ...L.lecturer, fontSize: L.lecturer.size, bold: true, color: c.white, fontFace: font, margin: 0,
-    });
+function renderTextEl(slide, el, value, font) {
+  if (value == null || value === "") return;
+  const baseOpts = {
+    x: el.x, y: el.y, w: el.w, h: el.h,
+    fontSize: el.fontSize || 14,
+    color: el.color || "000000",
+    bold: !!el.bold,
+    italic: !!el.italic,
+    align: el.align || "left",
+    valign: el.valign || "top",
+    fontFace: font,
+    margin: 0,
+  };
+  if (el.bullets && Array.isArray(value)) {
+    const items = value.map((line, i) => ({
+      text: String(line),
+      options: { bullet: true, breakLine: i < value.length - 1 },
+    }));
+    slide.addText(items, baseOpts);
+  } else {
+    const text = Array.isArray(value) ? value.join("\n") : String(value);
+    slide.addText(text, baseOpts);
   }
 }
 
-function renderC(slide, spec, font, L, content) {
-  const cards = content.cards || [];
-  const positions = grid(L.origin, L.cardW, L.cardH, L.gapX, L.gapY, L.columns, cards.length);
-  cards.forEach((card, i) => {
-    const pos = positions[i];
-    numberCard(slide, spec, font, pos.x, pos.y, L.cardW, L.cardH, L.numberColW, card.number != null ? card.number : i + 1, card.text);
-  });
+function renderImageEl(slide, el, value, assetsDir) {
+  if (!value) return;
+  const asset = resolveAsset(assetsDir, value);
+  if (asset) slide.addImage({ ...asset, x: el.x, y: el.y, w: el.w, h: el.h });
 }
 
-function renderD(slide, spec, font, L, content, assetsDir) {
-  const asset = resolveAsset(assetsDir, content.image);
-  if (asset) slide.addImage({ ...asset, ...L.image });
-}
+function renderTableEl(slide, el, value, colors, font) {
+  if (!value) return;
+  const headers = value.headers || [];
+  const rows = value.rows || [];
+  const headerColor = el.headerColor || colors.steelBlue;
+  const headerTextColor = el.headerTextColor || colors.white;
+  const rowColor = el.rowColor || colors.paleBlue;
+  const altRowColor = el.altRowColor || colors.white;
+  const headerHeight = el.headerHeight || 0.4;
+  const rowHeight = el.rowHeight || 0.5;
+  const fontSize = el.fontSize || 12;
+  const colW = el.w / Math.max(headers.length, 1);
 
-function renderE(slide, spec, font, L, content) {
-  const c = spec.colors;
-  if (content.startPoint) {
-    pill(slide, spec, font, L.startPoint.x, L.startPoint.y, L.startPoint.w, L.startPoint.h, content.startPoint.label || "START POINT", c.green);
-  }
-  if (content.startPoint && content.startPoint.context) {
-    slide.addShape("rect", { ...L.context, fill: { color: c.paleGreen }, line: { color: c.paleGreen } });
-    slide.addText(content.startPoint.context, {
-      x: L.context.x + 0.10, y: L.context.y, w: L.context.w - 0.20, h: L.context.h,
-      fontSize: 12, color: c.black, fontFace: font, valign: "middle", margin: 0,
-    });
-  }
-  const steps = content.steps || [];
-  const mainSteps = L.finalCardCentered ? steps.slice(0, -1) : steps;
-  const lastStep = L.finalCardCentered ? steps[steps.length - 1] : null;
-  const positions = grid(L.origin, L.cardW, L.cardH, L.gapX, L.gapY, L.columns, mainSteps.length);
-  mainSteps.forEach((step, i) => {
-    const pos = positions[i];
-    numberCard(slide, spec, font, pos.x, pos.y, L.cardW, L.cardH, L.numberColW, step.number != null ? step.number : i + 1, step.text);
-  });
-  if (lastStep) {
-    const rows = Math.ceil(mainSteps.length / L.columns);
-    const lastY = L.origin.y + rows * (L.cardH + L.gapY);
-    const lastX = L.origin.x + ((L.columns * (L.cardW + L.gapX) - L.gapX) - L.cardW) / 2;
-    numberCard(slide, spec, font, lastX, lastY, L.cardW, L.cardH, L.numberColW, lastStep.number != null ? lastStep.number : steps.length, lastStep.text);
-  }
-}
-
-function renderF(slide, spec, font, L, content) {
-  const c = spec.colors;
-  if (content.startPoint) {
-    pill(slide, spec, font, L.startPoint.x, L.startPoint.y, L.startPoint.w, L.startPoint.h, content.startPoint.label || "START POINT", c.steelBlue);
-  }
-  if (content.startPoint && content.startPoint.context) {
-    slide.addShape("rect", { ...L.context, fill: { color: c.paleBlue }, line: { color: c.paleBlue } });
-    slide.addText(content.startPoint.context, {
-      x: L.context.x + 0.10, y: L.context.y, w: L.context.w - 0.20, h: L.context.h,
-      fontSize: 12, color: c.black, fontFace: font, valign: "middle", margin: 0,
-    });
-  }
-  if (content.stageLabel) {
-    pill(slide, spec, font, L.stagePill.x, L.stagePill.y, L.stagePill.w, L.stagePill.h, content.stageLabel, c.steelBlue);
-  }
-  const cards = content.cards || [];
-  const positions = grid(L.origin, L.cardW, L.cardH, L.gapX, L.gapY, L.columns, cards.length);
-  cards.forEach((card, i) => {
-    const pos = positions[i];
-    headerCard(slide, spec, font, pos.x, pos.y, L.cardW, L.cardH, L.headerH, card.header, card.body);
-  });
-  if (content.annotation) {
-    slide.addText(content.annotation, {
-      ...L.annotation, fontSize: L.annotation.size, italic: true, color: c.navy, fontFace: font, margin: 0,
-    });
-  }
-}
-
-function renderG(slide, spec, font, L, content) {
-  const c = spec.colors;
-  const headers = content.headers || [];
-  const rows = content.rows || [];
-  const colW = L.w / Math.max(headers.length, 1);
   headers.forEach((h, i) => {
-    slide.addShape("rect", { x: L.x + i * colW, y: L.y, w: colW, h: L.headerH, fill: { color: c.steelBlue }, line: { color: c.steelBlue } });
-    slide.addText(h, {
-      x: L.x + i * colW + 0.05, y: L.y, w: colW - 0.10, h: L.headerH,
-      fontSize: 12, bold: true, color: c.white, fontFace: font, align: "center", valign: "middle", margin: 0,
+    slide.addShape("rect", { x: el.x + i * colW, y: el.y, w: colW, h: headerHeight, fill: { color: headerColor }, line: { color: headerColor } });
+    slide.addText(String(h), {
+      x: el.x + i * colW + 0.05, y: el.y, w: colW - 0.10, h: headerHeight,
+      fontSize, bold: true, color: headerTextColor, fontFace: font, align: "center", valign: "middle", margin: 0,
     });
   });
+
   rows.forEach((row, r) => {
-    const rowY = L.y + L.headerH + r * L.rowH;
-    const fill = r % 2 === 0 ? c.paleBlue : c.white;
+    const rowY = el.y + headerHeight + r * rowHeight;
+    const fill = r % 2 === 0 ? rowColor : altRowColor;
     row.forEach((cell, i) => {
-      slide.addShape("rect", { x: L.x + i * colW, y: rowY, w: colW, h: L.rowH, fill: { color: fill }, line: { color: fill } });
-      slide.addText(cell, {
-        x: L.x + i * colW + 0.08, y: rowY, w: colW - 0.16, h: L.rowH,
-        fontSize: 11, color: c.black, fontFace: font, valign: "middle", margin: 0,
+      slide.addShape("rect", { x: el.x + i * colW, y: rowY, w: colW, h: rowHeight, fill: { color: fill }, line: { color: fill } });
+      slide.addText(String(cell), {
+        x: el.x + i * colW + 0.08, y: rowY, w: colW - 0.16, h: rowHeight,
+        fontSize: fontSize - 1, color: "000000", fontFace: font, valign: "middle", margin: 0,
       });
     });
   });
 }
 
-function renderH(slide, spec, font, L, content) {
-  const c = spec.colors;
-  const columns = content.columns || [];
-  columns.slice(0, L.columns.length).forEach((col, i) => {
-    const pos = L.columns[i];
-    slide.addShape("rect", { x: pos.x, y: pos.y, w: L.colW, h: L.headerH, fill: { color: c.steelBlue }, line: { color: c.steelBlue } });
-    slide.addText(col.header || "", {
-      x: pos.x + 0.05, y: pos.y, w: L.colW - 0.10, h: L.headerH,
-      fontSize: 12, bold: true, color: c.white, fontFace: font, align: "center", valign: "middle", margin: 0,
-    });
-    const subY = pos.y + L.headerH;
-    slide.addShape("rect", { x: pos.x, y: subY, w: L.colW, h: L.subtitleH, fill: { color: c.paleBlue }, line: { color: c.paleBlue } });
-    slide.addText(col.subtitle || "", {
-      x: pos.x + 0.05, y: subY, w: L.colW - 0.10, h: L.subtitleH,
-      fontSize: 10, italic: true, color: c.black, fontFace: font, align: "center", valign: "middle", margin: 0,
-    });
-    const bodyY = subY + L.subtitleH;
-    slide.addShape("rect", { x: pos.x, y: bodyY, w: L.colW, h: L.bodyH, fill: { color: c.white }, line: { color: c.paleBlue } });
-    slide.addText(col.body || "", {
-      x: pos.x + 0.12, y: bodyY + 0.10, w: L.colW - 0.24, h: L.bodyH - 0.20,
-      fontSize: 11, color: c.black, fontFace: font, valign: "top", margin: 0,
-    });
-  });
-}
+function renderRepeatingCardsEl(slide, el, value, colors, font) {
+  const items = Array.isArray(value) ? value : [];
+  if (!items.length) return;
 
-function renderI(slide, spec, font, L, content) {
-  const c = spec.colors;
-  if (content.citationHeader) {
-    slide.addShape("rect", { ...L.citationBar, fill: { color: c.paleBlue }, line: { color: c.paleBlue } });
-    slide.addText(content.citationHeader, {
-      x: L.citationBar.x + 0.10, y: L.citationBar.y, w: L.citationBar.w - 0.20, h: L.citationBar.h,
-      fontSize: 12, italic: true, color: c.black, fontFace: font, valign: "middle", margin: 0,
-    });
+  const style = el.style || "plain";
+  const headerColor = el.headerColor || colors.steelBlue;
+  const bodyColor = el.bodyColor || colors.paleBlue;
+  const textColor = el.textColor || "000000";
+  const headerTextColor = el.headerTextColor || colors.white;
+  const numberTextColor = el.numberTextColor || colors.white;
+  const headerHeight = el.headerHeight || 0.38;
+  const numberColWidth = el.numberColWidth || 0.5;
+
+  const mainItems = el.lastItemCentered ? items.slice(0, -1) : items;
+  const lastItem = el.lastItemCentered ? items[items.length - 1] : null;
+
+  const positions = grid(el.origin, el.cardW, el.cardH, el.gapX, el.gapY, el.columns, mainItems.length);
+
+  function drawCard(x, y, item) {
+    slide.addShape("rect", { x, y, w: el.cardW, h: el.cardH, fill: { color: bodyColor }, line: { color: bodyColor } });
+    if (style === "header") {
+      slide.addShape("rect", { x, y, w: el.cardW, h: headerHeight, fill: { color: headerColor }, line: { color: headerColor } });
+      slide.addText(item.label || "", {
+        x: x + 0.10, y, w: el.cardW - 0.20, h: headerHeight,
+        fontSize: 12, bold: true, color: headerTextColor, fontFace: font, valign: "middle", margin: 0,
+      });
+      slide.addText(item.text || "", {
+        x: x + 0.15, y: y + headerHeight + 0.08, w: el.cardW - 0.30, h: el.cardH - headerHeight - 0.16,
+        fontSize: 12, color: textColor, fontFace: font, valign: "top", margin: 0,
+      });
+    } else if (style === "number") {
+      slide.addShape("rect", { x, y, w: numberColWidth, h: el.cardH, fill: { color: headerColor }, line: { color: headerColor } });
+      slide.addText(String(item.label != null ? item.label : ""), {
+        x, y, w: numberColWidth, h: el.cardH,
+        fontSize: 16, bold: true, color: numberTextColor, fontFace: font, align: "center", valign: "middle", margin: 0,
+      });
+      slide.addText(item.text || "", {
+        x: x + numberColWidth + 0.12, y, w: el.cardW - numberColWidth - 0.24, h: el.cardH,
+        fontSize: 12, color: textColor, fontFace: font, valign: "middle", margin: 0,
+      });
+    } else {
+      slide.addText(item.text || item.label || "", {
+        x: x + 0.12, y: y + 0.08, w: el.cardW - 0.24, h: el.cardH - 0.16,
+        fontSize: 12, color: textColor, fontFace: font, valign: "top", margin: 0,
+      });
+    }
   }
-  slide.addText(content.body || "", {
-    ...L.body, fontSize: 13, color: c.black, fontFace: font, valign: "top", margin: 0,
-  });
-  const pills = content.pills || [];
-  pills.forEach((p, i) => {
-    const x = L.pills.x0 + i * (L.pills.w + L.pills.gapX);
-    pill(slide, spec, font, x, L.pills.y, L.pills.w, L.pills.h, p.label, p.color || c.steelBlue);
-  });
-}
 
-function renderJ(slide, spec, font, L, content, assetsDir) {
-  const c = spec.colors;
-  if (content.image) {
-    const asset = resolveAsset(assetsDir, content.image);
-    if (asset) slide.addImage({ ...asset, ...L.image });
-    return;
+  mainItems.forEach((item, i) => drawCard(positions[i].x, positions[i].y, item));
+
+  if (lastItem) {
+    const rows = Math.ceil(mainItems.length / el.columns);
+    const lastY = el.origin.y + rows * (el.cardH + el.gapY);
+    const lastX = el.origin.x + ((el.columns * (el.cardW + el.gapX) - el.gapX) - el.cardW) / 2;
+    drawCard(lastX, lastY, lastItem);
   }
-  const links = content.links || [];
-  slide.addText(
-    links.map((l, i) => ({ text: l, options: { bullet: { type: "number" }, breakLine: i < links.length - 1 } })),
-    { ...L.links, fontSize: L.links.size, color: c.black, fontFace: font, valign: "top", margin: 0 }
-  );
 }
 
-function renderK(slide, spec, font, L, content) {
-  const c = spec.colors;
-  slide.addText(content.headline || "", {
-    ...L.headline, fontSize: L.headline.size, bold: true, color: c.black, fontFace: font, margin: 0,
-  });
-  const boxes = content.infoBoxes || [];
-  boxes.forEach((box, i) => {
-    const x = L.infoBoxes.x0 + i * (L.infoBoxes.w + L.infoBoxes.gapX);
-    slide.addShape("rect", { x, y: L.infoBoxes.y, w: L.infoBoxes.w, h: L.infoBoxes.h, fill: { color: c.white }, line: { color: c.steelBlue, width: 1 } });
-    slide.addText(box, {
-      x: x + 0.10, y: L.infoBoxes.y, w: L.infoBoxes.w - 0.20, h: L.infoBoxes.h,
-      fontSize: 12, color: c.black, fontFace: font, valign: "middle", margin: 0,
-    });
-  });
-  slide.addShape("rect", { ...L.panel, fill: { color: L.panel.color }, line: { color: L.panel.color } });
-  const cards = content.cards || [];
-  const positions = grid(L.origin, L.cardW, L.cardH, L.gapX, L.gapY, L.columns, cards.length);
-  cards.forEach((card, i) => {
-    const pos = positions[i];
-    numberCard(slide, spec, font, pos.x, pos.y, L.cardW, L.cardH, 0.45, card.number != null ? card.number : i + 1, card.text, { ...c, paleBlue: "FFFFFF" });
-  });
+function renderElement(slide, spec, font, assetsDir, el, value) {
+  switch (el.kind) {
+    case "rect":
+      return renderRect(slide, el, spec.colors);
+    case "text":
+      return renderTextEl(slide, el, value, font);
+    case "image":
+      return renderImageEl(slide, el, value, assetsDir);
+    case "table":
+      return renderTableEl(slide, el, value, spec.colors, font);
+    case "repeatingCards":
+      return renderRepeatingCardsEl(slide, el, value, spec.colors, font);
+    default:
+      return;
+  }
 }
 
-const RENDERERS = {
-  A: renderA, B: renderB, C: renderC, D: renderD, E: renderE,
-  F: renderF, G: renderG, H: renderH, I: renderI, J: renderJ, K: renderK,
-};
+function renderLayout(slide, spec, font, assetsDir, layout, content) {
+  (layout.elements || []).forEach((el) => {
+    const value = content ? content[el.id] : undefined;
+    renderElement(slide, spec, font, assetsDir, el, value);
+  });
+}
 
 // ----------------------------------------------------------------------
 // Main
@@ -533,14 +361,13 @@ function main() {
   list.forEach((slideData, idx) => {
     const slide = pres.addSlide();
     const layoutType = slideData.layoutType;
-    const renderer = RENDERERS[layoutType];
-    if (!renderer) {
+    const layout = spec.layouts && spec.layouts[layoutType];
+    if (!layout) {
       console.error(`Slide ${idx + 1}: unknown layoutType "${layoutType}", skipping content render (persistent elements only).`);
     }
     addPersistentElements(slide, spec, slideData, assetsDir);
-    if (renderer) {
-      const L = (spec.layouts && spec.layouts[layoutType]) || {};
-      renderer(slide, spec, font, L, slideData.content || {}, assetsDir);
+    if (layout) {
+      renderLayout(slide, spec, font, assetsDir, layout, slideData.content || {});
     }
     if (slideData.notes) slide.addNotes(slideData.notes);
   });
