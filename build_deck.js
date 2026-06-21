@@ -190,28 +190,86 @@ function renderRect(slide, el, colors) {
   slide.addShape("rect", { x: el.x, y: el.y, w: el.w, h: el.h, fill: { color }, line: { color } });
 }
 
+// ----------------------------------------------------------------------
+// Text-fit helpers: every text element gets a modest size bump for
+// readability, but never beyond what its box can actually hold, so a
+// long title shrinks back down automatically instead of overflowing.
+// ----------------------------------------------------------------------
+
+const FONT_SIZE_BUMP = 2; // "increase body text font size a bit"
+const LINE_SPACING_MULTIPLE = 1.3; // "increase line/paragraph spacing"
+const PARA_SPACE_AFTER = 6; // points between bullet items
+
+function estimateLineCount(text, fontSizePt, boxWidthIn) {
+  const charWidthIn = (fontSizePt * 0.52) / 72; // rough average glyph width for Calibri-ish fonts
+  const charsPerLine = Math.max(1, Math.floor(boxWidthIn / charWidthIn));
+  return Math.max(1, Math.ceil(String(text).length / charsPerLine));
+}
+
+// Shrinks fontSize down until the (estimated) wrapped text fits the box
+// height, never going below ~55% of the requested size so legibility
+// doesn't collapse on extreme cases.
+function fitFontSize(lines, requestedSize, boxWidthIn, boxHeightIn) {
+  const minSize = Math.max(9, Math.round(requestedSize * 0.55));
+  let size = requestedSize;
+  while (size > minSize) {
+    const lineHeightIn = (size * LINE_SPACING_MULTIPLE) / 72;
+    let totalLines = 0;
+    lines.forEach((line) => { totalLines += estimateLineCount(line, size, boxWidthIn); });
+    if (totalLines * lineHeightIn <= boxHeightIn) break;
+    size -= 1;
+  }
+  return size;
+}
+
+// Short, label-style lines (all caps, or "A | B | C" style) get bolded
+// as mini-headers instead of blending into surrounding paragraphs.
+function looksLikeLabel(text) {
+  const trimmed = String(text).trim();
+  if (!trimmed || trimmed.length > 60) return false;
+  return trimmed.includes("|") || trimmed === trimmed.toUpperCase();
+}
+
 function renderTextEl(slide, el, value, font) {
   if (value == null || value === "") return;
-  const baseOpts = {
-    x: el.x, y: el.y, w: el.w, h: el.h,
-    fontSize: el.fontSize || 14,
-    color: el.color || "000000",
-    bold: !!el.bold,
-    italic: !!el.italic,
-    align: el.align || "left",
-    valign: el.valign || "top",
-    fontFace: font,
-    margin: 0,
-  };
+  const requestedSize = (el.fontSize || 14) + FONT_SIZE_BUMP;
+
   if (el.bullets && Array.isArray(value)) {
+    const fittedSize = fitFontSize(value, requestedSize, el.w, el.h);
     const items = value.map((line, i) => ({
       text: String(line),
-      options: { bullet: true, breakLine: i < value.length - 1 },
+      options: {
+        bullet: true,
+        breakLine: i < value.length - 1,
+        bold: !!el.bold || looksLikeLabel(line),
+        paraSpaceAfter: PARA_SPACE_AFTER,
+      },
     }));
-    slide.addText(items, baseOpts);
+    slide.addText(items, {
+      x: el.x, y: el.y, w: el.w, h: el.h,
+      fontSize: fittedSize,
+      color: el.color || "000000",
+      italic: !!el.italic,
+      align: el.align || "left",
+      valign: el.valign || "top",
+      fontFace: font,
+      margin: 0,
+    });
   } else {
     const text = Array.isArray(value) ? value.join("\n") : String(value);
-    slide.addText(text, baseOpts);
+    const fittedSize = fitFontSize(text.split("\n"), requestedSize, el.w, el.h);
+    slide.addText(text, {
+      x: el.x, y: el.y, w: el.w, h: el.h,
+      fontSize: fittedSize,
+      color: el.color || "000000",
+      bold: !!el.bold,
+      italic: !!el.italic,
+      align: el.align || "left",
+      valign: el.valign || "top",
+      fontFace: font,
+      lineSpacingMultiple: LINE_SPACING_MULTIPLE,
+      margin: 0,
+    });
   }
 }
 
@@ -231,7 +289,7 @@ function renderTableEl(slide, el, value, colors, font) {
   const altRowColor = el.altRowColor || colors.white;
   const headerHeight = el.headerHeight || 0.4;
   const rowHeight = el.rowHeight || 0.5;
-  const fontSize = el.fontSize || 12;
+  const fontSize = (el.fontSize || 12) + 1;
   const colW = el.w / Math.max(headers.length, 1);
 
   headers.forEach((h, i) => {
@@ -279,26 +337,26 @@ function renderRepeatingCardsEl(slide, el, value, colors, font) {
       slide.addShape("rect", { x, y, w: el.cardW, h: headerHeight, fill: { color: headerColor }, line: { color: headerColor } });
       slide.addText(item.label || "", {
         x: x + 0.10, y, w: el.cardW - 0.20, h: headerHeight,
-        fontSize: 12, bold: true, color: headerTextColor, fontFace: font, valign: "middle", margin: 0,
+        fontSize: 13, bold: true, color: headerTextColor, fontFace: font, valign: "middle", margin: 0,
       });
       slide.addText(item.text || "", {
         x: x + 0.15, y: y + headerHeight + 0.08, w: el.cardW - 0.30, h: el.cardH - headerHeight - 0.16,
-        fontSize: 12, color: textColor, fontFace: font, valign: "top", margin: 0,
+        fontSize: 13, color: textColor, fontFace: font, valign: "top", lineSpacingMultiple: LINE_SPACING_MULTIPLE, margin: 0,
       });
     } else if (style === "number") {
       slide.addShape("rect", { x, y, w: numberColWidth, h: el.cardH, fill: { color: headerColor }, line: { color: headerColor } });
       slide.addText(String(item.label != null ? item.label : ""), {
         x, y, w: numberColWidth, h: el.cardH,
-        fontSize: 16, bold: true, color: numberTextColor, fontFace: font, align: "center", valign: "middle", margin: 0,
+        fontSize: 17, bold: true, color: numberTextColor, fontFace: font, align: "center", valign: "middle", margin: 0,
       });
       slide.addText(item.text || "", {
         x: x + numberColWidth + 0.12, y, w: el.cardW - numberColWidth - 0.24, h: el.cardH,
-        fontSize: 12, color: textColor, fontFace: font, valign: "middle", margin: 0,
+        fontSize: 13, color: textColor, fontFace: font, valign: "middle", lineSpacingMultiple: LINE_SPACING_MULTIPLE, margin: 0,
       });
     } else {
       slide.addText(item.text || item.label || "", {
         x: x + 0.12, y: y + 0.08, w: el.cardW - 0.24, h: el.cardH - 0.16,
-        fontSize: 12, color: textColor, fontFace: font, valign: "top", margin: 0,
+        fontSize: 13, color: textColor, fontFace: font, valign: "top", lineSpacingMultiple: LINE_SPACING_MULTIPLE, margin: 0,
       });
     }
   }
